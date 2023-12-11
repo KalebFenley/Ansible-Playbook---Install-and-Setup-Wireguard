@@ -1,0 +1,2 @@
+vpnserver       ansible_host=10.10.10.200
+radbox          ansible_host=10.10.10.65

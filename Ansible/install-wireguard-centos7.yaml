@@ -1,0 +1,12 @@
+- name: Install WireGuard on CentOS 7
+  hosts: centos7
+  become: true
+  tasks:
+  - name: Install EPEL repository
+    command: "sudo yum install epel-release https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm -y"
+
+  - name: Install elrepo
+    command: "sudo yum install yum-plugin-elrepo -y"
+
+  - name: Install WireGuard and wireguard-tools
+    command: "sudo yum install kmod-wireguard wireguard-tools -y"

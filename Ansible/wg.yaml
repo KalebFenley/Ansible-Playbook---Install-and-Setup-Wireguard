@@ -1,0 +1,157 @@
+- name: Configure WireGuard
+  hosts: localhost
+  become: yes
+  vars_prompt:
+  - name: "client"
+    prompt: "Enter affiliates name, this will also be the new WireGuard interface name"
+    private: no
+  - name: "remote_ip"
+    prompt: "Enter the remote endpoint (radbox public ip)"
+    private: no
+  - name: "allowed_ips"
+    prompt: "Enter the private IP's we need to access from the radbox (comma-separated CIDR)"
+    private: no
+
+  tasks:
+  - name: Check if WireGuard is installed
+    tasks:
+    - name: Check if WireGuard is installed
+      command: "which wg"
+      ignore_errors: true
+      register: wg_installed
+
+    - name: Include tasks if WireGuard is not installed
+      include_tasks: install-wireguard-centos7.yaml
+      when: wg_installed.rc != 0
+
+  - name: Generate Local public and private keys for the new wg tunnel
+    command: "wg genkey"
+    register: local_private_key_result
+    delegate_to: vpnserver
+
+  - set_fact:
+      local_private_key: "{{ local_private_key_result.stdout }}"
+    delegate_to: vpnserver
+
+  - name: Generate public key from private key
+    shell: "echo '{{ local_private_key }}' | wg pubkey"
+    register: local_pub_key_result
+    delegate_to: vpnserver
+
+  - set_fact:
+      local_pub_key: "{{ local_pub_key_result.stdout }}"
+    delegate_to: vpnserver
+
+  - name: Generate remote public and private keys
+    command: "wg genkey"
+    register: remote_private_key_result
+    delegate_to: vpnserver
+
+  - set_fact:
+      remote_private_key: "{{ remote_private_key_result.stdout }}"
+    delegate_to: vpnserver
+
+  - name: Generate public key from remote private key
+    shell: "echo '{{ remote_private_key }}' | wg pubkey"
+    register: remote_pub_key_result
+    delegate_to: vpnserver
+
+  - set_fact:
+      remote_pub_key: "{{ remote_pub_key_result.stdout }}"
+    delegate_to: vpnserver
+
+  - find:
+      paths: "/etc/wireguard/"
+      patterns: "*.conf"
+    register: conf_file_count
+    delegate_to: vpnserver
+
+  - set_fact:
+      local_private_ip: "192.168.137.{{ conf_file_count.matched + 2 }}/32"
+      remote_private_ip: "192.168.137.{{ conf_file_count.matched + 3 }}/32"
+    delegate_to: vpnserver
+
+  - name: Generate config file for NCM
+    template:
+      src: wireguard_config_ncm.j2
+      dest: "/etc/wireguard/{{ client }}.conf"
+    delegate_to: vpnserver
+
+  - name: Generate config file for Radbox
+    template:
+      src: wireguard_config_radbox.j2
+      dest: "/etc/wireguard/ncm-vpn.conf"
+    delegate_to: radbox
+
+  - name: Start and enable WireGuard service on NCM
+    ansible.builtin.service:
+      name: "wg-quick@{{ client }}"
+      enabled: yes
+      state: started
+    delegate_to: vpnserver
+
+  - name: Start and enable WireGuard service on Radbox
+    ansible.builtin.service:
+      name: "wg-quick@ncm-vpn"
+      enabled: yes
+      state: started
+    delegate_to: radbox
+
+  - name: Checking and configuring firewall
+    hosts: radbox
+    become: true
+
+    tasks:
+    - name: Checking service status
+      command: systemctl status "{{ item }}"
+      with_items:
+      - firewalld
+      - shorewall
+      - ufw
+      register: result
+      ignore_errors: yes
+
+    - name: Showing report
+      debug:
+        var: result
+
+    - name: Configure Firewalld
+      ansible.builtin.firewalld:
+        port: 62548/tcp
+        permanent: true
+        state: enabled
+      when: "'firewalld' in result.results[0].stdout"
+      ignore_errors: yes
+      register: firewalld_result
+
+    - name: Log Firewalld Configuration Result
+      debug:
+        var: firewalld_result
+      when: firewalld_result.failed
+
+    - name: Configure UFW
+      ansible.builtin.ufw:
+        rule: allow
+        port: 62548
+      when: "'ufw' in result.results[1].stdout"
+      ignore_errors: yes
+      register: ufw_result
+
+    - name: Log UFW Configuration Result
+      debug:
+        var: ufw_result
+      when: ufw_result.failed
+
+    - name: Configure Shorewall
+      lineinfile:
+        path: /etc/shorewall/rules
+        line: ACCEPT net $FW tcp 62548
+      when: "'shorewall' in result.results[0].stdout"
+      ignore_errors: yes
+      register: shorewall_result
+
+    - name: Log Shorewall Configuration Result
+      debug:
+        var: shorewall_result
+      when: shorewall_result.failed
+

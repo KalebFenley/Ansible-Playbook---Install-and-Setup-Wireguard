@@ -1,0 +1,11 @@
+# Created by Ansible - {{ ansible_date_time.date }}
+
+[Interface]
+Address = {{ local_private_ip }}
+PrivateKey = {{ local_private_key }}
+
+[Peer]
+PublicKey = {{ remote_pub_key }}
+AllowedIPs = {{ remote_private_ip }}, {{ allowed_ips }}
+Endpoint = {{ remote_ip }}:62548
+PersistentKeepalive = 25
